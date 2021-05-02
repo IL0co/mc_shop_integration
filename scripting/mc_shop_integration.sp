@@ -1,8 +1,5 @@
-#include <sdktools>
-#include <sdkhooks>
 #include <sourcemod>
 #include <mc_core>
-#include <clientprefs>
 #include <shop>
 
 #pragma newdecls required
@@ -16,8 +13,6 @@ public Plugin myinfo =
 	version	 	= "0.0.0",
 	url			= "http://hlmod.ru"
 };
-
-#include <sourcemod>
 
 KeyValues g_kvItems;
 
