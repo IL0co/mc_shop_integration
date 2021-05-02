@@ -16,6 +16,14 @@ public Plugin myinfo =
 
 KeyValues g_kvItems;
 
+public APLRes AskPluginLoad2(Handle myself, bool late, char[] error, int err_max)
+{	
+	__pl_shop_SetNTVOptional();
+	MarkNativeAsOptional("Shop_SetHide");
+    
+	return APLRes_Success;
+}
+
 public void OnPluginEnd()
 {
     Shop_UnregisterMe();
