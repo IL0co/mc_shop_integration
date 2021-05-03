@@ -1,6 +1,7 @@
 #include <sourcemod>
 #include <mc_core>
 #include <shop>
+#include <clientprefs>
 
 #pragma newdecls required
 #pragma semicolon 1
@@ -15,28 +16,32 @@ public Plugin myinfo =
 };
 
 KeyValues g_kvItems;
+StringMap g_mapCookies;
 
-public APLRes AskPluginLoad2(Handle myself, bool late, char[] error, int err_max)
-{	
-	__pl_shop_SetNTVOptional();
-	MarkNativeAsOptional("Shop_SetHide");
-    
-	return APLRes_Success;
-}
+#define CORE_TYPE "shop"
 
 public void OnPluginEnd()
 {
     Shop_UnregisterMe();
+	MC_UnRegisterMe();
 }
 
-public void MC_OnPluginUnRegistered(const char[] plugin_id, MC_PluginIndex plugin_index)
+public void MC_OnPluginUnRegistered(const char[] plugin_id)
 {
+	Cookie cookie;
+	if(g_mapCookies.GetValue(plugin_id, cookie) && cookie)
+	{
+		g_mapCookies.Remove(plugin_id);
+		delete cookie;
+	}
+		
     Shop_UnregisterMe();
     Shop_Started();
 }
 
 public void OnPluginStart()
 {
+    g_mapCookies = new StringMap();
 	LoadTranslations("mc_core.phrases");
 
     char buffer[256];
@@ -50,6 +55,33 @@ public void OnPluginStart()
         Shop_Started();
 }
 
+public void MC_OnCoreLoaded()
+{
+	MC_RegisterIntegration(CORE_TYPE, CallBack_MC_OnIntegrationGetItem);
+}
+
+public bool CallBack_MC_OnIntegrationGetItem(int client, const char[] plugin_id, char[] buffer, int maxlen)
+{
+	Cookie cookie;
+	g_mapCookies.GetValue(plugin_id, cookie);
+	cookie.Get(client, buffer, maxlen);
+
+	if(buffer[0])
+		return true;
+
+	return false;
+}
+
+public void MC_OnPluginRegistered(const char[] plugin_id)
+{
+	char buff[MAX_UNIQUE_LENGTH];
+	FormatEx(buff, sizeof(buff), "VIP:%s", plugin_id);
+
+	g_mapCookies.SetValue(plugin_id, new Cookie(buff, buff, CookieAccess_Private));
+
+    Load_Shop(plugin_id);
+}
+
 public void Shop_Started()
 {   
     ArrayList ar = MC_GetPluginIdsArrayList();
@@ -60,11 +92,8 @@ public void Shop_Started()
 		ar.GetString(index, plugin_id, sizeof(plugin_id));
 		Load_Shop(plugin_id);
 	}
-}
 
-public void MC_OnPluginRegistered(const char[] plugin_id, MC_PluginIndex plugin_index)
-{
-    Load_Shop(plugin_id);
+    delete ar;
 }
 
 stock void Load_Shop(const char[] plugin_id)
@@ -76,15 +105,11 @@ stock void Load_Shop(const char[] plugin_id)
 	if(!g_kvItems.GotoFirstSubKey())
         return;
 
-	// if(map.DontLoadInCores & Core_Shop)
-	// 	return;
-
-    MC_PluginIndex plugin_index = MC_GetPluginIndexFromId(plugin_id);
 	char category_unique[MAX_UNIQUE_LENGTH], category_name[MAX_UNIQUE_LENGTH], item[MAX_UNIQUE_LENGTH], in_category[MAX_UNIQUE_LENGTH];
 	CategoryId category_id;
 	int pos;
 
-	ArrayList ar = MC_GetPluginItemsArrayList(plugin_index);
+	ArrayList ar = MC_GetPluginItemsArrayList(plugin_id);
 
     do
     {
@@ -122,7 +147,7 @@ stock void Load_Shop(const char[] plugin_id)
 
                 Shop_SetInfo(item, "", g_kvItems.GetNum("Price"), g_kvItems.GetNum("Sell Price"), Item_Togglable, g_kvItems.GetNum("Duration"), g_kvItems.GetNum("Gold Price"), g_kvItems.GetNum("Gold Sell Price"));
                 Shop_SetLuckChance(g_kvItems.GetNum("Luck Chance"));
-                Shop_SetCallbacks(_, CallBack_Shop_OnItemToggled, _, CallBack_Shop_OnItemDisplay, .preview = (MC_IsItemHavePreview(plugin_index, item) ? CallBack_Shop_OnItemPreview : INVALID_FUNCTION));
+                Shop_SetCallbacks(_, CallBack_Shop_OnItemToggled, _, CallBack_Shop_OnItemDisplay, .preview = (MC_IsItemHavePreview(plugin_id, item) ? CallBack_Shop_OnItemPreview : INVALID_FUNCTION));
                 Shop_SetHide(view_as<bool>(g_kvItems.GetNum("Hide", 0)));
                 Shop_EndItem();
 
@@ -140,7 +165,10 @@ stock void Load_Shop(const char[] plugin_id)
 
 public bool CallBack_Shop_OnItemDisplay(int client, CategoryId category_id, const char[] category, ItemId item_id, const char[] item_unique, ShopMenu menu, bool &disabled, const char[] name, char[] buffer, int maxlen)
 {
-	if(MC_GetItemDisplayName(client, Get_CategoryUniqueOfThisItem(category, item_unique), item_unique, buffer, maxlen))
+    char plugin_id[MAX_UNIQUE_LENGTH];
+    Get_CategoryUniqueOfThisItem(category, item_unique, plugin_id, sizeof(plugin_id));
+
+	if(MC_GetItemDisplayName(client, plugin_id, CORE_TYPE, item_unique, buffer, maxlen))
 		return true;
 
 	return false;
@@ -148,45 +176,48 @@ public bool CallBack_Shop_OnItemDisplay(int client, CategoryId category_id, cons
 
 public void CallBack_Shop_OnItemPreview(int client, CategoryId category_id, const char[] category, ItemId item_id, const char[] item_unique)
 {
-	MC_CallItemPreview(client, Get_CategoryUniqueOfThisItem(category, item_unique), item_unique);
+    char plugin_id[MAX_UNIQUE_LENGTH];
+    Get_CategoryUniqueOfThisItem(category, item_unique, plugin_id, sizeof(plugin_id));
+    
+	MC_CallItemPreview(client, plugin_id, item_unique, CORE_TYPE);
 }
 
 public ShopAction CallBack_Shop_OnItemToggled(int client, CategoryId category_id, const char[] category, ItemId item_id, char[] item_unique, bool isOn, bool elapsed)
 {
-	// MC_PluginMap plugin_map;
-	// if(!GetPluginMap(plugin_id, plugin_map))
-	// 	return Shop_Raw;
-
-	// MC_ItemMap item_map = plugin_map.GetItemMap(item_unique);
+    char plugin_id[MAX_UNIQUE_LENGTH];
+    Get_CategoryUniqueOfThisItem(category, item_unique, plugin_id, sizeof(plugin_id));
+    
+    Cookie cookie;
+    g_mapCookies.GetValue(plugin_id, cookie);
 
 	if(isOn || elapsed)
 	{
-		// if(CallBack_OnItemSelected(client, plugin_map, item_map, plugin_id, "", Core_Shop))
-        MC_SetClientSelectedItem(client, Get_CategoryUniqueOfThisItem(category, item_unique), Shop, "");
+        cookie.Set(client, "");
 			
 		return Shop_UseOff;
 	}
 		
-	// if(CallBack_OnItemSelected(client, plugin_map, item_map, plugin_id, item_unique, Core_Shop))
-    MC_SetClientSelectedItem(client, Get_CategoryUniqueOfThisItem(category, item_unique), Shop, item_unique);
+    cookie.Set(client, item_unique);
 
 	return Shop_UseOn;
 }
 
-MC_PluginIndex Get_CategoryUniqueOfThisItem(const char[] shop_category, const char[] item)	
+bool Get_CategoryUniqueOfThisItem(const char[] shop_category, const char[] item, char[] plugin_id, int maxlen)	
 {
 	if(MC_IsValidPluginUnique(shop_category))
-		return MC_GetPluginIndexFromId(shop_category);
+    {
+        FormatEx(plugin_id, maxlen, shop_category);
+        return true;
+    }
 	
     g_kvItems.Rewind();
     g_kvItems.JumpToKey(shop_category);
     g_kvItems.JumpToKey(item);
 
-    char plugin_id[MAX_UNIQUE_LENGTH];
-    g_kvItems.GetString("In Category", plugin_id, sizeof(plugin_id));
+    g_kvItems.GetString("In Category", plugin_id, maxlen);
 	
 	if(MC_IsValidPluginUnique(plugin_id))
-		return MC_GetPluginIndexFromId(plugin_id);
+		return true;
 
-    return INVALID_PLUGIN_INDEX;
+    return false;
 }
